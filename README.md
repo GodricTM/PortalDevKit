@@ -1,7 +1,14 @@
 # PortalDevKit
+<p align="center">
+  <img src="brand/banner.svg" alt="PortalDevKit banner">
+</p>
+
+<p align="center">
+  <img src="brand/logo.svg" alt="PortalDevKit logo" width="164">
+</p>
 
 Everything we've learned building Android apps for **Meta Portal** — distilled from
-[`immortal`](https://github.com/GodricTM/immortal) (the launcher) and [`PortalOverlays`](https://github.com/GodricTM/PortalOverlays) (the floating HUD),
+[`immortal`](https://github.com/starbrightlab/immortal/tree/main) (the launcher) and [`PortalOverlays`](https://github.com/GodricTM/PortalOverlays) (the floating HUD),
 so the next Portal app starts from working patterns instead of a blank page.
 
 Portal is a discontinued, no-Google-services Android appliance. The platform has a handful of sharp
@@ -66,8 +73,8 @@ If you remember nothing else:
 Two shipped apps back every claim here:
 
 - **Immortal** (`com.immortal.launcher`) — a full home-screen replacement, screensaver/Dream, and an
-  on-device **App Store** with a hosted catalog and self-update. The richest source of manifest and
-  service patterns.
+  on-device **App Store** with a hosted catalog and self-update. See `starbrightlab/immortal:main` for
+  the current source. It is the richest source of manifest and service patterns.
 - **Portal Overlays** (`com.portal.overlays`) — a floating overlay HUD: draw-over-apps widgets,
   status strip, ntfy banners, an accessibility nav cluster, screenshot capture, and the OTA updater
   with a silent-install daemon.
