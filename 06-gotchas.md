@@ -1,0 +1,100 @@
+# 06 — Portal gotchas & fixes (field notes)
+
+Hard-won, device-verified quirks. Each one cost real debugging time on Portal hardware; check here
+before re-deriving them.
+
+## Overlay windows leave ghost trails when they move ★
+
+**Symptom:** a `TYPE_APPLICATION_OVERLAY` widget (nav cluster, status strip, any draggable) smears
+**ghost copies** across the screen when it moves — i.e. when you **drag** it, when the layout changes,
+or when a **soft keyboard opens** (the system pans the overlay up). The ghosts are real, touchable
+windows' leftover pixels and they **steal touches**, so the app feels frozen and you have to exit.
+
+**Root cause (two compounding factors on Portal's old compositor):**
+1. `FLAG_LAYOUT_NO_LIMITS` lets the window extend off-screen and **defeats damage-region clearing** —
+   the vacated pixels aren't repainted, so the old frame lingers.
+2. Overlay windows default to `softInputMode = adjust=pan`. When a keyboard opens in *any* app, the
+   system **pans every overlay upward**, dragging the smear across the whole screen.
+
+**Fix** (in the shared window-params builder — `OverlayService.baseParams()`):
+```kotlin
+// DON'T set FLAG_LAYOUT_NO_LIMITS. Clamp positions on-screen yourself instead.
+var flags = FLAG_NOT_TOUCH_MODAL or FLAG_NOT_FOCUSABLE   // (drop NOT_FOCUSABLE for modal overlays)
+WindowManager.LayoutParams(WRAP_CONTENT, height, TYPE_APPLICATION_OVERLAY, flags, TRANSLUCENT).apply {
+    softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING   // keyboard won't pan overlays
+}
+```
+**Diagnose** with `dumpsys window windows | grep -A2 com.yourapp` — if there's only **one** window per
+overlay but you *see* many on screen, it's a trail, not duplicate windows. The overlay's `mAttrs` will
+show `sim={adjust=pan}` (the smoking gun) before the fix.
+
+## Soft keyboard won't show / breaks touch
+
+**Symptom:** tapping a text field focuses it but no keyboard appears; or it appears but the app stops
+responding to touch.
+
+**Causes & fixes:**
+- **`windowSoftInputMode="stateUnchanged"` actively suppresses the IME** on focus. Use plain
+  `adjustResize`.
+- On Portal's old Android the IME also doesn't reliably auto-raise inside a scrolled Compose form.
+  Request it explicitly on focus — Compose's `LocalSoftwareKeyboardController.show()` **and** a posted
+  platform `InputMethodManager.showSoftInput(view, SHOW_IMPLICIT)` (the posted platform call is what
+  actually sticks).
+- If touch then "freezes," it's almost always the **overlay ghost-trail bug above** (the smeared HUD
+  windows over the form eat taps), not the IME itself. Fix that and typing works.
+- **Verify on-device with `dumpsys input_method | grep "mShowRequested\|mInputShown"`** — `screencap`
+  (what `metavr capture screenshot` falls back to on Portal) **does not composite the IME surface**, so
+  the keyboard won't appear in a screenshot even when it's genuinely up.
+
+## Reinstalling the app disables its accessibility service ★
+
+Every `metavr app install -r` (app update) makes Android **disable the app's accessibility service**
+as a security measure — so the nav cluster (Back/Home/Recents/Lock) silently stops working and the
+in-app "ACCESSIBILITY" indicator goes dark. **Re-enable after every reinstall:**
+```bash
+metavr adb shell settings put secure enabled_accessibility_services com.yourapp/com.yourapp.NavAccessibilityService
+metavr adb shell settings put secure accessibility_enabled 1
+```
+
+## Recents / Overview — Portal Mini has none; Portal+ does
+
+`performGlobalAction(GLOBAL_ACTION_RECENTS)`:
+- **Portal+** — works; opens Portal's **native (Facebook) overview** UI.
+- **Portal Mini (incl. 2nd gen) / smaller models** — returns **`false`** and does nothing: their
+  appliance SystemUI **ships no Overview/Recents activity** (smart-display launcher, no multitasking
+  switcher). This is a platform limitation, not an app bug.
+
+Handle it: distinguish "accessibility service off" from "action returned false while enabled", and on
+`false` fall back to your own installed-apps switcher (`queryIntentActivities(MAIN/LAUNCHER)` → tap to
+`startActivity`). See `OverlayService.showAppSwitcher()`.
+
+## Split-screen is not available
+
+`GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN` returns `false` on Portal — the appliance SystemUI has no
+split-screen/multi-window mode. Don't ship it as a feature (we tried, then removed it).
+
+## `screencap` is the only screenshot path
+
+`metavr capture screenshot` falls back to `screencap` (no `com.oculus.metacam` on Portal). It works for
+app UI but **omits the IME surface** and some secure/DRM surfaces. For verifying keyboard/overlay state,
+trust `dumpsys` over the picture.
+
+## Windows USB driver — Code 10 after install
+
+After installing the patched WinUSB driver, the ADB interface often shows **Problem Code 10 /
+`STATUS_NO_SUCH_DEVICE`** ("cannot start") — a stale enumeration, **not** a signature block (that's
+Code 52). **Unplug, toggle ADB Enabled off/on on the Portal, replug** to re-enumerate. The device may
+also alternate between enumerating as `Portal` (single ADB interface, `PID_1800`) and `Portal+`
+(composite, `PID_1801`) — both are fine once a driver is bound. Full driver walkthrough in
+[03 § USB-driver fix](03-build-and-sideload.md).
+
+## Quick triage table
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| HUD widgets smear / duplicate when dragged or typing | overlay trail bug | `SOFT_INPUT_ADJUST_NOTHING` + drop `FLAG_LAYOUT_NO_LIMITS` |
+| App "frozen", must exit, after tapping a field | ghost overlays eating touches | same fix as above |
+| Keyboard never appears | `stateUnchanged`, or no explicit IME show | `adjustResize` + `showSoftInput` on focus |
+| Nav buttons stopped working after an update | reinstall disabled accessibility | re-grant `enabled_accessibility_services` |
+| Recents button does nothing (Mini) | no Overview screen on this model | app-switcher fallback |
+| `metavr device list` empty though plugged in | USB driver / Code 10 | replug + toggle ADB; patched INF |

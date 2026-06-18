@@ -1,0 +1,46 @@
+name: Portal field report
+description: Report a reproducible Portal device behavior or quirk.
+title: "[field] "
+labels: ["field-report"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      description: Portal, Portal+, Portal Mini, Portal Go, or Portal TV. Include generation/year if known.
+      placeholder: Portal Mini 2nd gen
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware / API / build
+      placeholder: API 29, build number if known
+  - type: dropdown
+    id: evidence
+    attributes:
+      label: Evidence level
+      options:
+        - verified
+        - observed
+        - reported
+        - hypothesis
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What did you find?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps or commands
+      render: shell
+  - type: textarea
+    id: evidence_notes
+    attributes:
+      label: Logs, screenshots, or command output
+      description: Remove private topics, tokens, IPs, personal photos, or account names before posting.

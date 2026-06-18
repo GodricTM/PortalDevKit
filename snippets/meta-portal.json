@@ -1,0 +1,9 @@
+{
+  "name": "Your App",
+  "description": "One sentence describing what the app does on Portal.",
+  "package": "com.example.app",
+  "category": "utility",
+  "models": ["portal-plus", "portal-2019", "portal-mini", "portal-go", "portal-tv"],
+  "screenshots": ["screenshot.png", "screenshots/01_main.png"],
+  "minSdk": 28
+}

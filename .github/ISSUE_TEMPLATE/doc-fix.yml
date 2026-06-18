@@ -1,0 +1,16 @@
+name: Documentation fix
+description: Report a missing, unclear, or wrong PortalDevKit doc.
+title: "[docs] "
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What needs fixing?
+    validations:
+      required: true
+  - type: textarea
+    id: suggested
+    attributes:
+      label: Suggested replacement or source
+      description: Link sources or include command output if this is a technical claim.

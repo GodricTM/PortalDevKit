@@ -1,0 +1,43 @@
+name: App compatibility report
+description: Report whether an APK works on Portal.
+title: "[app] "
+labels: ["app-compatibility"]
+body:
+  - type: input
+    id: app
+    attributes:
+      label: App name and package
+      placeholder: Example App - com.example.app
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: APK version / versionCode / source
+      placeholder: v1.0, versionCode 1, GitHub/F-Droid URL
+  - type: input
+    id: device
+    attributes:
+      label: Portal model tested
+      placeholder: Portal+, Portal Mini, Portal TV
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options:
+        - Works
+        - Works with setup
+        - Installs but does not launch
+        - Installs but does not appear in launcher
+        - Crashes
+        - Blocked by Google Mobile Services
+        - Untested lead
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes, setup steps, logs, screenshots
+      description: Include exact ADB commands or permissions if setup was needed.

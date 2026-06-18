@@ -1,0 +1,9 @@
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+
+# Local captures and scratch notes that may contain private data.
+_local/
+captures/
+*.private.*

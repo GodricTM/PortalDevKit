@@ -1,0 +1,6 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0",
+  "apkUrl": "https://github.com/YOU/YOURAPP/releases/download/v1.0/YOURAPP-v1.0-release.apk",
+  "notes": "First release. This text shows in the in-app update dialog and the update notification."
+}

@@ -1,0 +1,66 @@
+<!-- Copy-paste manifest fragments for a Portal app. See ../02-manifest-tags.md for the full reference.
+     Replace com.example.app / activity-service names with yours. -->
+
+<!-- ============================ PERMISSIONS ============================ -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />        <!-- draw over apps -->
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />   <!-- self-update -->
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+<!-- Installs on every Portal model (none required) -->
+<uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+<uses-feature android:name="android.software.leanback"    android:required="false" />
+
+<!-- ===================== LAUNCHER (touch + TV in one) ===================== -->
+<activity
+    android:name=".MainActivity"
+    android:exported="true"
+    android:icon="@mipmap/ic_launcher"
+    android:banner="@drawable/banner"
+    android:windowSoftInputMode="adjustResize"
+    android:configChanges="orientation|screenSize|keyboardHidden">
+    <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+        <category android:name="android.intent.category.LAUNCHER" />
+        <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+    </intent-filter>
+</activity>
+
+<!-- ===================== FOREGROUND OVERLAY SERVICE ===================== -->
+<service
+    android:name=".OverlayService"
+    android:exported="false"
+    android:foregroundServiceType="dataSync|mediaProjection" />
+
+<!-- ===================== ACCESSIBILITY (Back/Home/Recents) ===================== -->
+<service
+    android:name=".NavAccessibilityService"
+    android:exported="false"
+    android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+    <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+    </intent-filter>
+    <meta-data
+        android:name="android.accessibilityservice"
+        android:resource="@xml/nav_accessibility" />
+</service>
+
+<!-- ===================== NOTIFICATION LISTENER (now-playing / mirror) ===================== -->
+<service
+    android:name=".NotifyListenerService"
+    android:exported="true"
+    android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+    <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+    </intent-filter>
+</service>
+
+<!-- ===================== BOOT RECEIVER (restart service) ===================== -->
+<receiver android:name=".BootReceiver" android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+    </intent-filter>
+</receiver>
