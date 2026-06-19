@@ -28,6 +28,34 @@ WindowManager.LayoutParams(WRAP_CONTENT, height, TYPE_APPLICATION_OVERLAY, flags
 overlay but you *see* many on screen, it's a trail, not duplicate windows. The overlay's `mAttrs` will
 show `sim={adjust=pan}` (the smoking gun) before the fix.
 
+## Hardware mic-mute makes capture open but stay silent — dead-mic watchdogs thrash ★
+
+**Symptom:** an `AudioRecord` watchdog (e.g. `VoiceBridge`) reports `rms≈1` (pure silence), logs
+`stream silent …ms (dead mic); rebuilding`, then `closeMic` → `openMic` **in a loop every ~4s,
+forever**. The open is *not* failing — `start_input_stream: exit` succeeds and an `AudioFlinger`
+thread comes up each cycle; the stream just carries silence.
+
+**Root cause:** Portal's **mic mute is a hardware switch**. When it's off, the signal is cut *before*
+the audio path, so the capture stream opens normally but delivers ~0 RMS. A watchdog that equates
+"sustained silence" with "broken mic" **false-positives on a completely normal Portal state** (user
+muted the mic) and rebuilds endlessly — churning AudioFlinger threads and ACDB lookups every cycle.
+
+**Fix** — don't treat silence as a dead mic while muted, and back off regardless:
+```kotlin
+// Gate the dead-mic check on mute state before rebuilding.
+if (audioManager.isMicrophoneMute()) return            // muted, not broken — do nothing
+// also listen for AudioManager.ACTION_MICROPHONE_MUTE_CHANGED to re-arm
+// and cap rebuilds (exponential backoff) so genuine silence can't churn the HAL at 4s intervals
+```
+If `isMicrophoneMute()` doesn't reflect the **hardware** switch on your model, treat sustained
+silence as *muted* (pause + surface a "mic off" hint) rather than *dead* — never loop a HAL rebuild on it.
+
+**Not the cause (log noise that rides along):** `avc: denied { write } … hal_audio_default …
+fifo_file`, `ACDB-LOADER … Returned = -19`, and `Request requires …RECORD_AUDIO_PRIVILEGED` all show
+up in the same trace but are unrelated to the muted silence — don't chase them first.
+
+**Evidence:** observed in device logcat (rms=1 rebuild loop); confirmed by toggling the hardware mic switch.
+
 ## Soft keyboard won't show / breaks touch
 
 **Symptom:** tapping a text field focuses it but no keyboard appears; or it appears but the app stops
@@ -94,6 +122,7 @@ also alternate between enumerating as `Portal` (single ADB interface, `PID_1800`
 |---|---|---|
 | HUD widgets smear / duplicate when dragged or typing | overlay trail bug | `SOFT_INPUT_ADJUST_NOTHING` + drop `FLAG_LAYOUT_NO_LIMITS` |
 | App "frozen", must exit, after tapping a field | ghost overlays eating touches | same fix as above |
+| Mic capture silent (rms≈0), watchdog rebuilds in a loop | hardware mic-mute switch is off | gate dead-mic check on `isMicrophoneMute()` + back off rebuilds |
 | Keyboard never appears | `stateUnchanged`, or no explicit IME show | `adjustResize` + `showSoftInput` on focus |
 | Nav buttons stopped working after an update | reinstall disabled accessibility | re-grant `enabled_accessibility_services` |
 | Recents button does nothing (Mini) | no Overview screen on this model | app-switcher fallback |
