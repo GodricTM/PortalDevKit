@@ -179,6 +179,53 @@ FGS type must include `mediaProjection`.
 - Verify on-device with `adb shell dumpsys input_method | grep "mShowRequested\|mInputShown"` — the
   `screencap` screenshot won't show the IME surface even when it's up.
 
+## L. Better (neural) TTS — sideload a sherpa-onnx engine, out-of-process ★
+
+**Problem:** Portal ships **one** TTS engine — `com.facebook.aloha.fbttsservice` (Meta's Aloha voice) —
+and **no GMS**, so there's no Google TTS and no second engine to pick a nicer voice from. That one
+engine is the quality ceiling for `android.speech.tts.TextToSpeech`.
+
+**Don't** bundle a neural runtime (Piper/sherpa-onnx) *inside* your app: a model download that
+truncates on Portal's flaky Wi-Fi makes onnxruntime abort **natively (`SIGABRT`)**, which takes your
+*whole process* down — and the runtime + model bloats the APK (and your self-update download) by
+100–400 MB. (Immortal learned this the hard way.)
+
+**Do** sideload a **separate** [k2-fsa sherpa-onnx TTS *engine* APK](https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html).
+Two reasons it works where in-process didn't:
+1. **Out-of-process** — it runs as its own app/process, registered as a system TTS engine
+   (`android.intent.action.TTS_SERVICE`). A bad model or native crash kills *that* process; your app
+   just falls back to FbTtsService. Crash-isolated.
+2. **Model bundled in the APK** (one voice per APK) — **no runtime download → no truncation.** The
+   engine extracts it to `/sdcard/Android/data/com.k2fsa.sherpa.onnx.tts.engine/files/<model>/` on
+   first run.
+
+**Critical:** these k2-fsa engine APKs are **minSdk 21**, so they install on **gen-1 Portal/Portal+
+(API 28)**. The polished alternative, [SherpaTTS (`org.woheller69.ttsengine`)](https://f-droid.org/packages/org.woheller69.ttsengine/),
+has a nice model/voice manager but is **minSdk 29 → gen-1 Portal+ can't run it** (only gen-2 Portals /
+Quest). Native arm64 sherpa-onnx itself runs fine on API 28 — verified on a Portal+ (Piper RTF ≈ 0.38,
+~2.7× real-time; Kokoro heavier but usable).
+
+**Install + make it the default (provision over USB, never Portal Wi-Fi):**
+```bash
+adb install -r -d sherpa-onnx-<ver>-arm64-v8a-eng-tts-engine-vits-piper-en_US-lessac-medium.apk
+adb shell settings put secure tts_default_synth com.k2fsa.sherpa.onnx.tts.engine   # needs WRITE_SECURE_SETTINGS
+```
+Voice families, worst→best: Piper `*-medium` (one voice, fast, ~85 MB) → Piper `*-high` →
+**Kokoro** (`kokoro-multi-lang`, **~103 voices**, most natural, ~360 MB, heavier). Romanian etc. exist
+as Piper APKs (`ro_RO-mihai-medium`).
+
+**Gotchas (device-verified):**
+- **One active model per install.** Every k2-fsa engine APK shares the package
+  `com.k2fsa.sherpa.onnx.tts.engine`, so installing a second one **replaces** the first as the *active*
+  model (the previous model dir lingers in `files/` but isn't reachable — the prebuilt has no
+  model-picker). To switch language/family you **reinstall** the other APK. For multiple selectable
+  models in one app you'd need the API-29 SherpaTTS, or a custom engine that enumerates `files/`.
+- **Voice selection within a multi-speaker model** (e.g. Kokoro) is a **Speaker ID** field in the
+  engine's own activity; single-speaker Piper models have none. Apps can also enumerate speakers via
+  `TextToSpeech.getVoices()` and `setVoice(...)`.
+- Ship the chosen engine APK in your **provisioning kit** so a fresh Portal gets the good voice over
+  USB — don't rely on the in-app HuggingFace download over the Portal's connection.
+
 ---
 
 ## Quick "what do I lift for a new app?" index
@@ -195,4 +242,5 @@ FGS type must include `mediaProjection`.
 | Grant Portal permissions for users | onboarding + enable_portal_permissions helper (I) |
 | Screen capture | MediaProjection pattern (J) |
 | Text input that works | the keyboard fix (K) |
+| Better/neural voice (no GMS) | sideloaded sherpa-onnx TTS engine, out-of-process (L) |
 | Get discovered | Immortal catalog submission ([04](04-store-and-discovery.md)) |
