@@ -116,6 +116,38 @@ also alternate between enumerating as `Portal` (single ADB interface, `PID_1800`
 (composite, `PID_1801`) — both are fine once a driver is bound. Full driver walkthrough in
 [03 § USB-driver fix](03-build-and-sideload.md).
 
+## A full-screen WebView swallows tap-to-exit (`setOnTouchListener { false }` can't fix it) ★
+
+**Symptom:** a full-screen **WebView** layered over a tap-to-dismiss surface — an HTML clock face or
+dashboard on top of a `DreamService` screensaver or a holding Activity — makes **tap-to-exit and
+swipe dead**. The host's `root.setOnTouchListener` never even logs the touch, so the screensaver/HUD
+can't be dismissed and reads as frozen/stuck. A *non-WebView* face over the same host dismisses fine.
+
+**Root cause:** a WebView is inherently clickable/scrollable, so **`WebView.onTouchEvent()` returns
+`true` and consumes the event**. The common "let it pass through" attempt —
+`setOnTouchListener { _, _ -> false }` — does **not** work: a listener returning `false` only means
+"I didn't handle it," after which the View's own `onTouchEvent` still runs and eats the touch. So the
+WebView consumes it *before* it can bubble up to the parent/host listener.
+
+**Fix** — subclass and return `false` from `onTouchEvent` (and `performClick`) so touches fall
+through to the host:
+```kotlin
+val web = object : WebView(context) {
+    override fun onTouchEvent(event: MotionEvent): Boolean = false
+    override fun performClick(): Boolean = false
+}
+```
+Touch dispatch now falls through WebView → parent → the host's `OnTouchListener`, restoring
+tap-to-exit / swipe-to-change. Only do this when the page is **non-interactive** (a self-ticking
+clock, a static dashboard); if the page needs scrolling or links, gate it by region/state instead.
+
+**Diagnose:** with the WebView up, `adb shell input tap X Y` produces **no** touch log in the host and
+`dumpsys window | grep mCurrentFocus` stays on the screensaver/overlay window. Swap the WebView face
+for a plain one and the same tap dismisses instantly — that isolates it to the WebView, not the host.
+
+**Evidence:** Portal+ `DreamService` photo frame with an HTML flip-clock face — trap and fix both
+verified on device (tap → `onExit → finish()` → `USER_EXIT` only after the override).
+
 ## Quick triage table
 
 | Symptom | Likely cause | Fix |
@@ -127,3 +159,4 @@ also alternate between enumerating as `Portal` (single ADB interface, `PID_1800`
 | Nav buttons stopped working after an update | reinstall disabled accessibility | re-grant `enabled_accessibility_services` |
 | Recents button does nothing (Mini) | no Overview screen on this model | app-switcher fallback |
 | `metavr device list` empty though plugged in | USB driver / Code 10 | replug + toggle ADB; patched INF |
+| Full-screen WebView (clock face / dashboard) can't be tapped away | `WebView.onTouchEvent` consumes the touch | subclass WebView → `onTouchEvent`/`performClick` return `false` |
