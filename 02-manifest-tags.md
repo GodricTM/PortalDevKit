@@ -127,18 +127,35 @@ Immortal's overlay back-gesture uses `specialUse` + a `PROPERTY_SPECIAL_USE_FGS_
 </receiver>
 ```
 
-### Screensaver / Dream (Immortal only, but reusable)
+### Screensaver / Dream — the only way to put content on the idle screen
+
+A `DreamService` is **not just for launchers**: it's the only surface that survives the screen saver. A
+`TYPE_APPLICATION_OVERLAY` is composited *under* a running dream (see [06](06-gotchas.md)), so if you
+want a now-playing card / clock / dashboard to stay visible while idle, ship a Dream.
 
 ```xml
-<service android:name=".PhotoDreamService" android:exported="true"
+<service android:name=".YourDreamService" android:exported="true"
+         android:label="Your screensaver"
          android:permission="android.permission.BIND_DREAM_SERVICE">
     <intent-filter>
         <action android:name="android.service.dreams.DreamService" />
         <category android:name="android.intent.category.DEFAULT" />
     </intent-filter>
+    <!-- optional: points the system "gear" on the dream at your settings screen -->
+    <meta-data android:name="android.service.dream" android:resource="@xml/dream_info" />
 </service>
 ```
-Set as the active dream via `settings put secure screensaver_components`.
+`res/xml/dream_info.xml`: `<dream xmlns:android="…" android:settingsActivity="com.yourapp/.MainActivity" />`
+
+Activate it (the system DREAM_SETTINGS picker is often hidden on Portal):
+```bash
+adb shell settings put secure screensaver_components com.yourapp/.YourDreamService
+adb shell settings put secure screensaver_enabled 1
+adb shell am start -n com.android.systemui/.Somnambulator   # trigger to test
+```
+If the **Immortal launcher** is installed it will reclaim the slot on boot/home unless you revoke its
+`WRITE_SECURE_SETTINGS` first (see [06](06-gotchas.md)). Reusable scene + preview pattern in
+[05 § DreamService screensaver](05-reusable-patterns.md).
 
 ### "Open with…" APK install handler (Immortal's universal installer)
 Lets the app handle any `.apk` the user taps (routes through the silent daemon):

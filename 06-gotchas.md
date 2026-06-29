@@ -116,6 +116,28 @@ also alternate between enumerating as `Portal` (single ADB interface, `PID_1800`
 (composite, `PID_1801`) — both are fine once a driver is bound. Full driver walkthrough in
 [03 § USB-driver fix](03-build-and-sideload.md).
 
+If you are trying to control the Portal without ADB, remember there are two different USB paths:
+`AOA`/accessory mode and `ADB`. AOA can accept HID keyboard input and accessory strings, but it does
+not grant shell access. ADB is present in firmware and appears to be gated by boot/factory logic
+(`ro.boot.force_enable_usb_adb`, `vendor.sys.boot_mode`, FFBM/QMMI, and related init scripts), not by
+ordinary app settings.
+
+If you are working from the published `aloha` ROM dump, do not assume it contains a bypass or hidden
+debug app. The dump is still useful as evidence of the real boot and accessory plumbing, but not as a
+simple unlock package.
+
+## Test harness mode
+
+`adb shell cmd testharness enable` appears to be a useful device-local provisioning mode on Portal.
+Community reports say it resets the device while preserving ADB, skips part of first-run setup, and can
+clear or bypass the normal 4-digit lock screen during that mode. It may also leave the device ready for
+a replacement launcher over ADB, which is why it is interesting for Portal recovery and accessibility
+work.
+
+Treat it as a provisioning/reset path, not as a full factory unlock. Verify the exact side effects on
+your own unit before relying on it, especially if you are trying to preserve installed apps or account
+state.
+
 ## A full-screen WebView swallows tap-to-exit (`setOnTouchListener { false }` can't fix it) ★
 
 **Symptom:** a full-screen **WebView** layered over a tap-to-dismiss surface — an HTML clock face or
@@ -148,6 +170,95 @@ for a plain one and the same tap dismisses instantly — that isolates it to the
 **Evidence:** Portal+ `DreamService` photo frame with an HTML flip-clock face — trap and fix both
 verified on device (tap → `onExit → finish()` → `USER_EXIT` only after the override).
 
+## Real-time audio capture (output-mix or mic) is not viable for a sideloaded app ★
+
+**Goal that fails:** a music **visualizer that reacts to the actual audio** (FFT/levels of what's
+playing). Both Android capture paths are blocked or degraded on Portal — verified on Portal+ (API 28).
+
+1. **Output mix via `Visualizer(0)` — BLOCKED.** Constructing `android.media.audiofx.Visualizer` on
+   session `0` (the global mix) fails immediately:
+   ```
+   E visualizers-JNI: Visualizer initCheck failed -3
+   E Visualizer-JAVA: Error code -3 when initializing Visualizer.
+   ```
+   `-3` = `ERROR_INVALID_OPERATION`. Capturing the system mix needs the **privileged, signature-level
+   `android.permission.CAPTURE_AUDIO_OUTPUT`**, ungrantable to a sideloaded app. `RECORD_AUDIO` is not
+   enough. There's also no public way to get another app's audio **session id** (e.g. Spotify's) to
+   attach a per-session `Visualizer`, so you can't target the player's stream either.
+
+2. **Microphone via `AudioRecord` — works, but laggy/choppy.** `AudioRecord(MIC, 44100, MONO)`
+   initializes, starts, and **reads** (the mic hears the speakers), so a Goertzel/FFT band bank does
+   move. But Portal's **always-on assistant owns the single near-field mic and preempts your stream**:
+   ```
+   W AudioRecord: dead IAudioRecord, creating a new one from obtainBuffer()
+   E         : Request requires com.facebook.alohasdk.permission.RECORD_AUDIO_PRIVILEGED
+   V AudioPolicyManagerCustom: startInput(...) stopping silenced input 5238
+   ```
+   Your non-privileged input is repeatedly **silenced + killed + recreated**, delivering data in bursts
+   with multi-hundred-ms gaps → visible lag/stutter. View-side easing smooths motion but can't fill the
+   gaps. The uninterrupted/far-field path is behind `…RECORD_AUDIO_PRIVILEGED` (Meta-signed).
+
+**What to ship instead:** treat the **media session's `STATE_PLAYING`** as the reactive signal and run a
+**smooth synthetic** visualizer (animate while playing). Keep any mic reactor opt-in + off by default,
+guarded so a refused/contended capture returns `false` and falls back. Full write-up:
+`PortalOverlays/docs/portal-audio-capture.md`. (Distinct from the mic-mute loop above: that's the
+hardware mute switch; this is privileged-listener contention + an output-mix permission wall.)
+
+## A running screensaver (Dream) composites OVER your `TYPE_APPLICATION_OVERLAY` — re-host as a Dream ★
+
+**Symptom:** floating overlays (now-playing, status strip, nav) **vanish the moment the screen saver /
+Daydream starts**, then return when it ends. The views aren't being removed — it's pure z-order.
+
+**Root cause:** `TYPE_APPLICATION_OVERLAY` is the highest window type a sideloaded app may use, and the
+system draws a **`DreamService`** above it. By design, nothing an overlay does can paint over a screen
+saver. (This is also why a launcher's *own* now-playing survives its dream — it's drawn **inside** the
+dream's view tree, not as a separate window.)
+
+**Fix:** to keep content on the idle screen, **ship your own `DreamService`** and have the user select it
+as the device screen saver. Build the view tree against a plain `Context` so the same scene can be
+hosted by both the `DreamService` and a normal Activity (for an in-app **Preview** — a preview Activity
+does not disturb the registered screen saver). Activate without the (often-hidden) system picker via:
+```bash
+adb shell settings put secure screensaver_components com.yourapp/.YourDreamService
+adb shell settings put secure screensaver_enabled 1
+adb shell am start -n com.android.systemui/.Somnambulator   # trigger the active dream to test
+```
+See the reusable pattern in [05 § DreamService screensaver](05-reusable-patterns.md).
+
+## The Immortal launcher reclaims the screensaver slot on boot / return-home ★
+
+If the device runs the **Immortal launcher**, its `SettingsGuard.reaffirmScreensaver` **re-asserts its
+own `screensaver_components`** on boot and on every return to its home screen (it forces
+`screensaver_enabled=0` if *its* saver is off, or overwrites the component if on) — so any other screen
+saver you register is **evicted**. That self-healing is a **no-op without `WRITE_SECURE_SETTINGS`**, so:
+```bash
+adb shell pm revoke com.immortal.launcher android.permission.WRITE_SECURE_SETTINGS   # then register yours
+# undo: adb shell pm grant com.immortal.launcher android.permission.WRITE_SECURE_SETTINGS
+```
+Verify it holds by reading `settings get secure screensaver_components` **after** bouncing through the
+launcher's home.
+
+## Mains-powered Portals report no battery — hide "0%" ★
+
+The Portal+ (and other plugged-in models) carry **no battery**: the `ACTION_BATTERY_CHANGED` sticky
+intent returns `EXTRA_PRESENT=false` and `EXTRA_LEVEL=0`, so a naive readout shows a misleading
+**"0%"**. Gate any battery UI on `getBooleanExtra(BatteryManager.EXTRA_PRESENT, false)` and hide it when
+absent.
+
+## You can't `am start` a non-exported activity from adb on Portal ★
+
+`adb shell am start -n com.yourapp/.SomeActivity` for an `exported="false"` activity fails with
+`Permission Denial: … not exported from uid …` — the Portal shell uid lacks `START_ANY_ACTIVITY`. To
+**test** an internal activity from the CLI, temporarily set `android:exported="true"`, verify, then
+revert (keep it `false` in the shipped build). Dreams are testable without this via the `Somnambulator`
+trick above.
+
+## Make user-facing `.bat` helpers `pause` at the end ★
+
+A double-clicked `.bat` closes its console instantly, so users never see the success/failure output.
+End wrapper scripts with `echo.` + `pause` so the window holds until a keypress. (From a terminal it
+just waits for one key — harmless.)
+
 ## Quick triage table
 
 | Symptom | Likely cause | Fix |
@@ -160,3 +271,22 @@ verified on device (tap → `onExit → finish()` → `USER_EXIT` only after the
 | Recents button does nothing (Mini) | no Overview screen on this model | app-switcher fallback |
 | `metavr device list` empty though plugged in | USB driver / Code 10 | replug + toggle ADB; patched INF |
 | Full-screen WebView (clock face / dashboard) can't be tapped away | `WebView.onTouchEvent` consumes the touch | subclass WebView → `onTouchEvent`/`performClick` return `false` |
+| Audio visualizer won't react to the music | `Visualizer(0)` blocked (`-3`); mic preempted by assistant | use media-session `STATE_PLAYING` + synthetic animation; mic reactor opt-in only |
+| Overlays vanish when the screen saver starts | a Dream composites over `TYPE_APPLICATION_OVERLAY` | ship your own `DreamService`; preview via a normal Activity |
+| Your screen saver keeps getting reverted | Immortal's `reaffirmScreensaver` reclaims the slot | `pm revoke com.immortal.launcher …WRITE_SECURE_SETTINGS` |
+| Battery shows "0%" on a Portal+ | mains-powered, no battery present | gate on `BatteryManager.EXTRA_PRESENT` |
+| `am start` an internal screen fails (`not exported`) | shell lacks `START_ANY_ACTIVITY` | temporarily `exported=true` to test; Dreams via `Somnambulator` |
+
+## Stock Portal behavior from the XDA thread
+
+Forum posts reinforce a few behaviors that matter when debugging stock Portal:
+
+- Setup was reported to require DNS for `www.facebook.com`, `graph.facebook.com`, and
+  `graph-portal.facebook.com` at different stages.
+- Browser and Bluetooth still worked on some units, while Alexa and the old "Hey Portal" path were
+  dead or unreliable on later firmware.
+- Spotify could appear in the app store even when it was missing from the music-services list, so
+  app-store visibility and service integration were separate paths.
+- The browser was reported as heavily throttled, with YouTube and Spotify becoming barely usable.
+- The rear USB-C port was repeatedly described as a factory/debug path, which matches the AOA and
+  ADB-gating behavior we already documented.

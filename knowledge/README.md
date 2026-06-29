@@ -9,6 +9,7 @@ someone can reproduce on real hardware.
 - `apps/` - app compatibility reports and sideloading notes.
 - `tools/` - host tooling, drivers, ADB, metavr, SDK setup findings.
 - `research/` - leads that are not yet verified.
+  - `research/reverse-engineering/` - dump inventories, APK analysis notes, firmware breadcrumbs, and other reverse-engineering work that is not yet a stable doc.
 
 ## Entry template
 

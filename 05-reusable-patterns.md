@@ -96,6 +96,25 @@ no such feature). Portal Overlays falls back to its **own installed-apps switche
 
 ## E. Keyless push — ntfy.sh
 
+**Blind-navigation assistant pattern:** this same service shape can support an audio-first Portal UI:
+listen to `AccessibilityEvent`s, inspect focused/clickable `AccessibilityNodeInfo`s, speak the current
+screen/selection through Android `TextToSpeech`, and use `performAction(...)`,
+`performGlobalAction(...)`, or `dispatchGesture(...)` for navigation. Keep expectations realistic:
+cross-app node labels vary, Portal has no GMS/TalkBack stack to lean on, and reinstalling still disables
+the service until it is re-granted. Best first target is an Immortal/Portal launcher assistant with a
+small overlay, big tactile zones, spoken app names, Back/Home, "what is on screen?", and "open <app>".
+
+**AOA accessory input:** the Portal also supports Android Open Accessory mode, including AOA v2 and
+HID keyboard input over accessory mode. That is useful for external control/input experiments, but it
+is not the same thing as unlocking ADB. Treat AOA as an input channel, not a shell/debug channel.
+
+**Portal ROM / firmware dump takeaway:** the published `aloha` firmware dump shows the standard Portal
+app stack and system images, but not a normal "developer unlock" package. The useful distinction is:
+`AOA` is a real accessory/input path; `ADB` is present in firmware but appears gated by boot/factory
+state (`ro.boot.force_enable_usb_adb`, `vendor.sys.boot_mode`, FFBM/QMMI, and related init logic).
+For accessibility work, that means the promising path is an app or accessory that improves input and
+navigation, not a claim that the dump itself exposes ADB.
+
 **What:** real-time push without FCM. Subscribe to an ntfy topic over SSE; each published message pops
 a banner. Self-hostable.
 
@@ -214,7 +233,25 @@ Voice families, worst→best: Piper `*-medium` (one voice, fast, ~85 MB) → Pip
 **Kokoro** (`kokoro-multi-lang`, **~103 voices**, most natural, ~360 MB, heavier). Romanian etc. exist
 as Piper APKs (`ro_RO-mihai-medium`).
 
-**Gotchas (device-verified):**
+**Current Portal+ custom engine setup (device-verified):**
+- Immortal uses Android `TextToSpeech`; the neural runtime stays out-of-process in
+  `com.k2fsa.sherpa.onnx.tts.engine`.
+- Staged models live under
+  `/sdcard/Android/data/com.k2fsa.sherpa.onnx.tts.engine/files/<model>/`.
+- The current staged set is **Kokoro v1.0 English** (`kokoro-multi-lang-v1_0`) plus
+  **Romanian Mihai** (`vits-piper-ro_RO-mihai-medium`). Kokoro itself does not provide Romanian.
+- Kokoro v1.1 is not used on this Portal because the staged build included Chinese-focused voices that
+  should not appear in the family picker.
+- Meta's original Portal TTS remains available as `com.facebook.aloha.fbttsservice`. Switch back with
+  `adb shell settings put secure tts_default_synth com.facebook.aloha.fbttsservice`; switch to Sherpa
+  with `adb shell settings put secure tts_default_synth com.k2fsa.sherpa.onnx.tts.engine`.
+- App voice pickers must list all non-network voices, not only `Locale.getDefault()`, so Romanian remains
+  selectable on an English Portal.
+- Android may keep a stale `TextToSpeech.voice` when `setVoice(...)` returns `ERROR`. Immortal and the
+  custom Sherpa engine therefore also pass/read a private synthesis param,
+  `sherpa_voice_name`, so the engine can resolve the intended Kokoro speaker/Romanian voice directly.
+
+**Stock k2-fsa prebuilt APK gotchas:**
 - **One active model per install.** Every k2-fsa engine APK shares the package
   `com.k2fsa.sherpa.onnx.tts.engine`, so installing a second one **replaces** the first as the *active*
   model (the previous model dir lingers in `files/` but isn't reachable — the prebuilt has no
@@ -227,6 +264,53 @@ as Piper APKs (`ro_RO-mihai-medium`).
   USB — don't rely on the in-app HuggingFace download over the Portal's connection.
 
 ---
+
+## M. DreamService screensaver that survives the idle screen ★
+
+**Why:** a floating overlay is hidden the instant the screen saver starts — the system composites the
+dream over `TYPE_APPLICATION_OVERLAY` ([06](06-gotchas.md)). To keep a now-playing card / clock /
+dashboard on the idle screen, **be** the screen saver.
+
+**Shape (the key move):** put the whole view tree + data wiring in a **`Context`-based scene class**, so
+the *same* code renders in the real Dream **and** in a normal Activity for an in-app **Preview** (the
+preview doesn't touch the registered screen saver, so the idle screen keeps working).
+
+```kotlin
+class ScreensaverScene(private val ctx: Context, private val onExit: () -> Unit) {
+    fun createView(): View { /* build background + clock + now-playing against ctx; tap → onExit() */ }
+    fun start() { /* startMedia(); tick(); optional reactor */ }
+    fun stop()  { /* remove callbacks; release media + webview */ }
+    fun keepBright() = Prefs(ctx).screensaverKeepBright
+}
+class YourDreamService : DreamService() {           // the real screen saver
+    private var scene: ScreensaverScene? = null
+    override fun onAttachedToWindow() { super.onAttachedToWindow()
+        isInteractive = true; isFullscreen = true
+        scene = ScreensaverScene(this) { finish() }.also { isScreenBright = it.keepBright(); setContentView(it.createView()) } }
+    override fun onDreamingStarted() { super.onDreamingStarted(); scene?.start() }
+    override fun onDreamingStopped() { scene?.stop(); super.onDreamingStopped() }
+    override fun onDetachedFromWindow() { scene?.stop(); scene = null; super.onDetachedFromWindow() }
+}
+class ScreensaverPreviewActivity : Activity() {     // in-app Preview, same scene
+    private var scene: ScreensaverScene? = null
+    override fun onCreate(b: Bundle?) { super.onCreate(b)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        scene = ScreensaverScene(this) { finish() }.also { setContentView(it.createView()) } }
+    override fun onResume() { super.onResume(); scene?.start() }
+    override fun onPause()  { scene?.stop(); super.onPause() }
+}
+```
+
+**Gotchas baked in (all in [06](06-gotchas.md)):**
+- A fullscreen WebView background swallows the dismiss tap → put a top transparent clickable catcher
+  over everything that calls `onExit()`.
+- Hide the battery line when `BatteryManager.EXTRA_PRESENT` is false (mains Portals show a fake "0%").
+- A real audio visualizer can't follow the music — animate on media-session `STATE_PLAYING` instead.
+- Manifest tag + activation (`settings put secure screensaver_components …`) in [02](02-manifest-tags.md);
+  if Immortal is installed, revoke its `WRITE_SECURE_SETTINGS` so it stops reclaiming the slot.
+
+Reference impl: `PortalOverlays/.../ScreensaverScene.kt`, `NowPlayingDreamService.kt`,
+`ScreensaverPreviewActivity.kt`, and the `set_screensaver.bat` helper.
 
 ## Quick "what do I lift for a new app?" index
 
@@ -243,4 +327,5 @@ as Piper APKs (`ro_RO-mihai-medium`).
 | Screen capture | MediaProjection pattern (J) |
 | Text input that works | the keyboard fix (K) |
 | Better/neural voice (no GMS) | sideloaded sherpa-onnx TTS engine, out-of-process (L) |
+| Content on the idle screen / a screen saver | DreamService + shared Context scene + preview Activity (M) |
 | Get discovered | Immortal catalog submission ([04](04-store-and-discovery.md)) |
