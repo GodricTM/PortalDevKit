@@ -4,6 +4,6 @@
   "package": "dev.portal.devkit",
   "category": "developer",
   "models": ["portal-plus", "portal-2019", "portal-mini", "portal-go", "portal-tv"],
-  "screenshots": ["screenshots/portaldevkit-banner.png"],
+  "screenshots": ["screenshots/portaldevkit-icon.png"],
   "minSdk": 28
 }
