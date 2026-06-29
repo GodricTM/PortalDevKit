@@ -1,0 +1,9 @@
+{
+  "name": "PortalDevKit",
+  "description": "Developer knowledge base and reusable patterns for building sideloaded Android apps on Meta Portal devices.",
+  "package": "dev.portal.devkit",
+  "category": "developer",
+  "models": ["portal-plus", "portal-2019", "portal-mini", "portal-go", "portal-tv"],
+  "screenshots": ["screenshots/portaldevkit-banner.png"],
+  "minSdk": 28
+}
